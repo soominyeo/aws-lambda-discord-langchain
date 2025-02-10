@@ -1,20 +1,42 @@
+name: Deploy Lambda
 on:
   push:
     branches: [ main ]
 
-name: Deploy python lambda
-
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-
     steps:
+    - uses: actions/checkout@v2
+    
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+    
+    - name: Install dependencies to the directory
+      run: |
+        python -m pip install --upgrade pip
+        mkdir ./deploy
+        pip install -r requirements.txt --target ./deploy
 
-    - uses: actions/checkout@v1
-
-    - name: Deploy to AWS
-      uses: wealize/deploy-lambda@v0.1.11
-      env:
-        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+    - name: Copy source files to the directory
+      run: |
+        cp ./src/* ./deploy
+    
+    - name: Create a .zip file
+      working-directory: ./deploy
+      run: zip -r ../function.zip ./*
+        
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ap-northeast-1
+      
+    - name: Deploy on lambda
+      run: |
+        aws lambda update-function-code \
+          --function-name YOUR_FUNCTION_NAME \
+          --zip-file fileb://function.zip
