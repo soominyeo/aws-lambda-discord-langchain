@@ -15,13 +15,13 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v2
       with:
-        python-version: '3.10'
-    
+        python-version: ${{ vars.PYTHON_VERSION }}
+
     - name: Install dependencies to the layer directory
       run: |
         python -m pip install --upgrade pip
-        mkdir -p layer/python/lib/python3.10/site-packages
-        pip install -r requirements.txt -t layer/python/lib/python3.10/site-packages
+        mkdir -p "layer/python/lib/python${{ vars.PYTHON_VERSION }}/site-packages"
+        pip install -r requirements.txt -t "layer/python/lib/python${{ vars.PYTHON_VERSION }}/site-packages"
     
     - name: Create a .zip file
       working-directory: layer
@@ -32,21 +32,39 @@ jobs:
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ap-northeast-1
+        aws-region: ${{ vars.AWS_REGION }}
 
     - name: Upload to S3
       run: |
-        aws s3 cp layer.zip s3://aws-lambda-discord-langchain/layers/layer.zip
+        aws s3 cp layer.zip s3://${{ vars.AWS_S3_BUCKET_NAME }}/layers/layer.zip
 
     - name: Update Lambda layer
       run: |
         LAYER_VERSION=$(aws lambda publish-layer-version \
-          --layer-name aws-lambda-discord-langchain-dependencies \
-          --description 'aws-lambda-discord-langchain-dependencies:$(git rev-parse --short "$GITHUB_SHA")' \
-          --content S3Bucket=aws-lambda-discord-langchain,S3Key=layers/layer.zip \
-          --compatible-runtimes python3.10 \
+          --layer-name ${{ vars.AWS_LAMBDA_LAYER_NAME }} \
+          --description "${{ vars.AWS_LAMBDA_LAYER_NAME }}:$GITHUB_SHA" \
+          --content "S3Bucket=${{ vars.AWS_S3_BUCKET_NAME }},S3Key=layers/layer.zip" \
+          --compatible-runtimes "python${{ vars.PYTHON_VERSION }}" \
           --query 'Version' \
           --output text)
         aws lambda update-function-configuration \
-          --function-name aws-lambda-discord-langchain \
-          --layers "arn:aws:lambda:ap-northeast-1:437563817343:layer:aws-lambda-discord-langchain-dependencies:${LAYER_VERSION}"
+          --function-name ${{ vars.AWS_LAMBDA_FUNCTION_NAME }} \
+          --layers "arn:aws:lambda:${{ vars.AWS_REGION }}:${{ vars.AWS_ACCOUNT_ID }}:layer:${{ vars.AWS_LAMBDA_LAYER_NAME }}:$LAYER_VERSION"
+
+    - name: Delete old versions (keep last 5)
+      run: |
+        VERSIONS=$(aws lambda list-layer-versions \
+          --layer-name ${{ vars.AWS_LAMBDA_LAYER_NAME }} \
+          --query 'LayerVersions[*].Version' \
+          --output text | tr '\t' '\n' | sort -nr)
+        
+        COUNT=0
+        for version in $VERSIONS; do
+          COUNT=$((COUNT+1))
+          if [ $COUNT -gt 5 ]; then
+            echo "Deleting version $version"
+            aws lambda delete-layer-version \
+              --layer-name ${{ vars.AWS_LAMBDA_LAYER_NAME }} \
+              --version-number $version
+          fi
+        done
