@@ -3,6 +3,7 @@ on:
   push:
     paths:
       - 'requirements.txt'
+      - '.github/workflows/deploy_lambda_layer.yml'
     branches: [ main ]
 
 jobs:
@@ -25,18 +26,27 @@ jobs:
     - name: Create a .zip file
       working-directory: layer
       run: zip -r ../layer.zip ./*
-        
+
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v1
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ap-northeast-1
-      
-    - name: Publish layer
+
+    - name: Upload to S3
       run: |
-        aws lambda publish-layer-version \
-          --layer-name my-dependencies \
-          --description "Python dependencies for Lambda" \
-          --zip-file fileb://layer.zip \
-          --compatible-runtimes python3.10
+        aws s3 cp layer.zip s3://aws-lambda-discord-langchain/layers/layer.zip
+
+    - name: Update Lambda layer
+      run: |
+        LAYER_VERSION=$(aws lambda publish-layer-version \
+          --layer-name aws-lambda-discord-langchain-dependencies \
+          --description 'aws-lambda-discord-langchain-dependencies:$(git rev-parse --short "$GITHUB_SHA")' \
+          --content S3Bucket=aws-lambda-discord-langchain,S3Key=layers/layer.zip \
+          --compatible-runtimes python3.10 \
+          --query 'Version' \
+          --output text)
+        aws lambda update-function-configuration \
+          --function-name aws-lambda-discord-langchain \
+          --layers "arn:aws:lambda:ap-northeast-1:437563817343:layer:aws-lambda-discord-langchain-dependencies:${LAYER_VERSION}"
