@@ -1,9 +1,14 @@
 name: Deploy Lambda Function
 on:
+  workflow_run:
+    workflows: [Startup]
+    types:
+      - completed
   push:
     paths-ignore:
       - 'requirements.txt'
       - '.github/workflows/deploy_lambda_layer.yml'
+      - '.github/workflows/startup.yml'
     branches: [ main ]
 
 jobs:

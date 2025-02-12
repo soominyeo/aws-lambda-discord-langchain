@@ -1,5 +1,9 @@
 name: Deploy Lambda Layer
 on:
+  workflow_run:
+    workflows: [Startup]
+    types:
+      - completed
   push:
     paths:
       - 'requirements.txt'

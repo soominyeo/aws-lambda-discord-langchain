@@ -1,0 +1,84 @@
+name: Startup
+
+on: workflow_dispatch
+
+jobs:
+  init:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ vars.AWS_REGION }}
+
+    - name: Create an IAM Role for AWS Lambda function
+      run : |
+        if ! aws iam get-role --role-name ${{ vars.AWS_LAMBDA_FUNCTION_ROLE_NAME}} 2>/dev/null; then
+          aws iam create-role \
+              --role-name ${{ vars.AWS_LAMBDA_FUNCTION_ROLE_NAME}} \
+              --assume-role-policy-document '{
+                  "Version": "2012-10-17",
+                  "Statement": [{
+                      "Effect": "Allow",
+                      "Principal": {
+                          "Service": "lambda.amazonaws.com"
+                      },
+                      "Action": "sts:AssumeRole"
+                  }]
+          }'
+          echo "Created IAM role: ${{ vars.AWS_LAMBDA_FUNCTION_ROLE_NAME }}"
+          echo "Waiting for role to be ready..."
+          sleep 5
+        else
+          echo "Role already exists: ${{ vars.AWS_LAMBDA_FUNCTION_ROLE_NAME }}"
+        fi
+        
+        POLICIES=(
+          "arn:aws:iam::aws:policy/SecretsManagerReadWrite"
+          "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+          "arn:aws:iam::aws:policy/AWSLambda_FullAccess"
+        )
+        
+        for policy in "${POLICIES[@]}"; do
+          aws iam attach-role-policy \
+            --role-name ${{ vars.AWS_LAMBDA_FUNCTION_ROLE_NAME}} \
+            --policy-arn "$policy"
+        done
+
+    - name: Create AWS Lambda function
+      run: |
+        if ! aws lambda get-function --function-name ${{ vars.AWS_LAMBDA_FUNCTION_NAME }} 2>/dev/null; then
+          echo "def ${{ vars.AWS_LAMBDA_FUNCTION_HANDLER }}(event, context): return {'statusCode': 200}" > "${{ vars.AWS_LAMBDA_FUNCTION_MAIN_FILE }}.py"
+          zip function.zip "${{ vars.AWS_LAMBDA_FUNCTION_MAIN_FILE }}.py"
+        
+          aws lambda create-function \
+          --function-name ${{ vars.AWS_LAMBDA_FUNCTION_NAME }} \
+          --runtime "python${{ vars.PYTHON_VERSION }}" \
+          --handler "${{ vars.AWS_LAMBDA_FUNCTION_MAIN_FILE }}.${{ vars.AWS_LAMBDA_FUNCTION_HANDLER }}" \
+          --zip-file fileb://function.zip \
+          --role arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.AWS_LAMBDA_FUNCTION_ROLE_NAME }}
+          echo "Created new Lambda function: ${{ vars.AWS_LAMBDA_FUNCTION_NAME }}"
+        else
+          echo "Function already exists: ${{ vars.AWS_LAMBDA_FUNCTION_NAME }}"
+        fi
+    - name: Create AWS S3 Bucket for Lambda layers
+      run: |
+        if ! aws s3api head-bucket --bucket ${{ vars.AWS_S3_BUCKET_NAME }} 2>/dev/null; then
+          aws s3api create-bucket \
+              --bucket ${{ vars.AWS_S3_BUCKET_NAME }} \
+              --region ${{ vars.AWS_REGION }} \
+              --create-bucket-configuration "LocationConstraint=${{ vars.AWS_REGION }}"
+          aws s3api put-bucket-versioning \
+              --bucket ${{ vars.AWS_S3_BUCKET_NAME }} \
+              --versioning-configuration Status=Enabled
+          echo "Created new S3 bucket: ${{ vars.AWS_S3_BUCKET_NAME }}"
+        else
+          echo "Bucket already exists: ${{ vars.AWS_S3_BUCKET_NAME }}"
+        fi
+
+
+    
